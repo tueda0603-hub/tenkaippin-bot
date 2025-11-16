@@ -483,7 +483,7 @@ class DiscordBot(discord.Client):
             
             for store_info in tokyo_stores:
                 embed = discord.Embed(
-                    title="🏪 天下一品 都内新店情報",
+                    title="東京に天下一品がオープンするよ！",
                     description=store_info['title'],
                     url=store_info['url'],
                     color=discord.Color.orange(),
