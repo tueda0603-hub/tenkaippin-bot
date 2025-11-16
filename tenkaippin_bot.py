@@ -278,6 +278,14 @@ class TenkaippinCrawler:
         # まず、タイトル・本文に都内関連のキーワードがあるかチェック
         for keyword in TOKYO_KEYWORDS:
             if keyword in combined_text:
+                # 都内キーワードが見つかった場合でも、詳細ページからオープン日を抽出
+                url = news_item.get('url')
+                if url and url != NEWS_URL:
+                    detail_text = self.fetch_article_detail(url)
+                    if detail_text:
+                        opening_date = self.extract_opening_date(detail_text)
+                        if opening_date:
+                            news_item['opening_date'] = opening_date
                 return True
         
         # タイトル・本文に都内キーワードがない場合、詳細ページをチェック

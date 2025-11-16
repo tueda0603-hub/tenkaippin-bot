@@ -94,10 +94,20 @@ async def run_cron_job():
                 return
             
             # 都内の新店情報をフィルタリング（投稿履歴もチェック）
-            tokyo_stores = [
-                item for item in recent_news
-                if crawler.is_tokyo_store(item) and not history_manager.is_posted(item)
-            ]
+            tokyo_stores = []
+            for item in recent_news:
+                if crawler.is_tokyo_store(item) and not history_manager.is_posted(item):
+                    # オープン日がまだ抽出されていない場合、詳細ページから抽出
+                    if 'opening_date' not in item:
+                        url = item.get('url')
+                        if url and url != "https://www.tenkaippin.co.jp/news/":
+                            detail_text = crawler.fetch_article_detail(url)
+                            if detail_text:
+                                opening_date = crawler.extract_opening_date(detail_text)
+                                if opening_date:
+                                    item['opening_date'] = opening_date
+                                    logger.info(f"オープン日を抽出: {opening_date}")
+                    tokyo_stores.append(item)
             
             if not tokyo_stores:
                 logger.info("都内の新店情報は見つかりませんでした")
