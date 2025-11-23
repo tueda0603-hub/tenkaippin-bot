@@ -150,6 +150,12 @@ async def run_cron_job():
         except Exception as e:
             logger.error(f"クロール・投稿処理中にエラー: {e}", exc_info=True)
         finally:
+            # データベース接続を閉じる
+            if history_manager.db_conn:
+                try:
+                    history_manager.db_conn.close()
+                except:
+                    pass
             await client.close()
     
     # Botを起動

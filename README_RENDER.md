@@ -32,16 +32,33 @@ git push -u origin main
    - **Schedule**: `0 7 * * *` (毎日朝7時 UTC)
    - **Branch**: `main` (または使用しているブランチ名)
 
-### 3. 環境変数の設定
+### 3. PostgreSQLデータベースの作成（推奨：履歴の永続化）
+
+1. Render Dashboardで「New +」→「PostgreSQL」を選択
+2. 以下の設定：
+   - **Name**: `tenkaippin-bot-db`
+   - **Database**: `tenkaippin_bot`
+   - **User**: `tenkaippin_user`
+   - **Region**: Cron Jobと同じリージョンを選択
+   - **Plan**: Free（無料プラン）
+3. 「Create Database」をクリック
+4. 作成後、**Internal Database URL**をコピー
+
+### 4. 環境変数の設定
 
 Render Dashboardで、作成したCron Jobの「Environment」セクションで以下を設定：
 
 ```
 DISCORD_TOKEN=your_discord_bot_token
 DISCORD_CHANNEL_ID=your_channel_id
+DATABASE_URL=postgresql://user:password@host:port/database
 DAYS_TO_CHECK=7
 HISTORY_RETENTION_DAYS=90
 ```
+
+**重要**: `DATABASE_URL`は、PostgreSQL作成時に表示される**Internal Database URL**を使用してください。
+
+**注意**: PostgreSQLを設定しない場合、履歴は一時ストレージに保存され、再デプロイ時に失われる可能性があります。
 
 ### 4. タイムゾーンの調整
 
@@ -98,4 +115,5 @@ python cron_job.py
 - Renderの無料プランでは、Cron Jobの実行時間に制限がある場合があります
 - 履歴ファイル（`posted_history.json`）はRenderの一時ストレージに保存されます
 - より永続的な保存が必要な場合は、外部データベース（PostgreSQL等）の使用を検討してください
+
 

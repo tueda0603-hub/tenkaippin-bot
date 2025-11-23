@@ -321,16 +321,91 @@ class TenkaippinCrawler:
 
 
 class HistoryManager:
-    """投稿履歴を管理するクラス"""
+    """投稿履歴を管理するクラス（PostgreSQLまたはJSONファイル）"""
     
     def __init__(self, history_file: Path, retention_days: int = 90):
         self.history_file = history_file
         self.retention_days = retention_days
-        self.history = self.load_history()
-        self.cleanup_old_history()
+        self.use_database = False
+        self.db_conn = None
+        
+        # PostgreSQL接続を試みる
+        database_url = os.getenv("DATABASE_URL")
+        if database_url:
+            try:
+                import psycopg2
+                from urllib.parse import urlparse
+                
+                # DATABASE_URLをパース
+                parsed = urlparse(database_url)
+                self.db_conn = psycopg2.connect(
+                    host=parsed.hostname,
+                    port=parsed.port,
+                    database=parsed.path[1:],  # 先頭の/を除去
+                    user=parsed.username,
+                    password=parsed.password
+                )
+                self.use_database = True
+                self._init_database()
+                logger.info("PostgreSQLデータベースに接続しました")
+            except Exception as e:
+                logger.warning(f"PostgreSQL接続エラー（JSONファイルにフォールバック）: {e}")
+                self.use_database = False
+        
+        if not self.use_database:
+            self.history = self.load_history()
+            self.cleanup_old_history()
+    
+    def _init_database(self):
+        """データベーステーブルを初期化"""
+        if not self.db_conn:
+            return
+        
+        try:
+            with self.db_conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS posted_history (
+                        id SERIAL PRIMARY KEY,
+                        article_key VARCHAR(255) UNIQUE NOT NULL,
+                        posted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_posted_at 
+                    ON posted_history(posted_at)
+                """)
+                self.db_conn.commit()
+        except Exception as e:
+            logger.error(f"データベース初期化エラー: {e}")
+            self.db_conn.rollback()
     
     def load_history(self) -> Dict[str, str]:
         """投稿履歴を読み込む（key: 記事のキー, value: 投稿日時のISO形式）"""
+        if self.use_database:
+            return self._load_from_database()
+        else:
+            return self._load_from_file()
+    
+    def _load_from_database(self) -> Dict[str, str]:
+        """データベースから履歴を読み込む"""
+        history = {}
+        if not self.db_conn:
+            return history
+        
+        try:
+            with self.db_conn.cursor() as cur:
+                cur.execute("SELECT article_key, posted_at FROM posted_history")
+                for row in cur.fetchall():
+                    article_key, posted_at = row
+                    history[article_key] = posted_at.isoformat()
+            logger.info(f"データベースから{len(history)}件の履歴を読み込みました")
+        except Exception as e:
+            logger.error(f"データベース読み込みエラー: {e}")
+        
+        return history
+    
+    def _load_from_file(self) -> Dict[str, str]:
+        """JSONファイルから履歴を読み込む"""
         if self.history_file.exists():
             try:
                 with open(self.history_file, 'r', encoding='utf-8') as f:
@@ -354,6 +429,14 @@ class HistoryManager:
     
     def save_history(self):
         """投稿履歴を保存する"""
+        if self.use_database:
+            # データベースは個別に保存するため、ここでは何もしない
+            pass
+        else:
+            self._save_to_file()
+    
+    def _save_to_file(self):
+        """JSONファイルに履歴を保存"""
         try:
             data = {
                 'last_updated': datetime.now().isoformat(),
@@ -368,6 +451,33 @@ class HistoryManager:
     def cleanup_old_history(self):
         """古い投稿履歴を削除"""
         cutoff_date = datetime.now() - timedelta(days=self.retention_days)
+        
+        if self.use_database:
+            self._cleanup_database(cutoff_date)
+        else:
+            self._cleanup_file(cutoff_date)
+    
+    def _cleanup_database(self, cutoff_date: datetime):
+        """データベースから古い履歴を削除"""
+        if not self.db_conn:
+            return
+        
+        try:
+            with self.db_conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM posted_history WHERE posted_at < %s",
+                    (cutoff_date,)
+                )
+                deleted_count = cur.rowcount
+                self.db_conn.commit()
+                if deleted_count > 0:
+                    logger.info(f"データベースから古い投稿履歴を{deleted_count}件削除しました")
+        except Exception as e:
+            logger.error(f"データベースクリーンアップエラー: {e}")
+            self.db_conn.rollback()
+    
+    def _cleanup_file(self, cutoff_date: datetime):
+        """JSONファイルから古い履歴を削除"""
         initial_count = len(self.history)
         
         keys_to_remove = []
@@ -389,15 +499,60 @@ class HistoryManager:
     
     def is_posted(self, news_item: Dict) -> bool:
         """既に投稿済みかどうかをチェック"""
-        # タイトルと日付の組み合わせでユニーク性を判定
         key = f"{news_item.get('date')}_{news_item.get('title')}"
-        return key in self.history
+        
+        if self.use_database:
+            return self._is_posted_in_database(key)
+        else:
+            return key in self.history
+    
+    def _is_posted_in_database(self, key: str) -> bool:
+        """データベースで投稿済みかチェック"""
+        if not self.db_conn:
+            return False
+        
+        try:
+            with self.db_conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM posted_history WHERE article_key = %s", (key,))
+                return cur.fetchone() is not None
+        except Exception as e:
+            logger.error(f"データベースチェックエラー: {e}")
+            return False
     
     def mark_as_posted(self, news_item: Dict):
         """投稿済みとしてマーク"""
         key = f"{news_item.get('date')}_{news_item.get('title')}"
-        self.history[key] = datetime.now().isoformat()
-        self.save_history()
+        
+        if self.use_database:
+            self._mark_as_posted_in_database(key)
+        else:
+            self.history[key] = datetime.now().isoformat()
+            self.save_history()
+    
+    def _mark_as_posted_in_database(self, key: str):
+        """データベースに投稿済みとしてマーク"""
+        if not self.db_conn:
+            return
+        
+        try:
+            with self.db_conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO posted_history (article_key, posted_at)
+                    VALUES (%s, %s)
+                    ON CONFLICT (article_key) DO NOTHING
+                """, (key, datetime.now()))
+                self.db_conn.commit()
+        except Exception as e:
+            logger.error(f"データベース保存エラー: {e}")
+            self.db_conn.rollback()
+    
+    def __del__(self):
+        """データベース接続を閉じる"""
+        if self.db_conn:
+            try:
+                self.db_conn.close()
+            except:
+                pass
 
 
 class DiscordBot(discord.Client):
