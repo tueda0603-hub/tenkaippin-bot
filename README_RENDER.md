@@ -32,17 +32,27 @@ git push -u origin main
    - **Schedule**: `0 7 * * *` (毎日朝7時 UTC)
    - **Branch**: `main` (または使用しているブランチ名)
 
-### 3. PostgreSQLデータベースの作成（推奨：履歴の永続化）
+### 3. 履歴の永続化設定（推奨：GitHub Gist - 完全無料）
 
-1. Render Dashboardで「New +」→「PostgreSQL」を選択
-2. 以下の設定：
-   - **Name**: `tenkaippin-bot-db`
-   - **Database**: `tenkaippin_bot`
-   - **User**: `tenkaippin_user`
-   - **Region**: Cron Jobと同じリージョンを選択
-   - **Plan**: Free（無料プラン）
-3. 「Create Database」をクリック
-4. 作成後、**Internal Database URL**をコピー
+**重要**: RenderのCron Jobsでは各実行が独立コンテナのため、ファイルに保存した履歴は失われます。GitHub Gistを使用することで、完全無料で履歴を永続化できます。
+
+#### GitHub Gistのセットアップ
+
+1. **GitHub Personal Access Tokenを作成**
+   - https://github.com/settings/tokens にアクセス
+   - 「Generate new token (classic)」をクリック
+   - **Note**: `tenkaippin-bot-history`（任意）
+   - **Expiration**: 無期限または長期間
+   - **Scopes**: `gist` のみチェック
+   - 「Generate token」をクリックしてトークンをコピー（一度しか表示されません）
+
+2. **Gistを作成**
+   - https://gist.github.com/ にアクセス
+   - **Filename**: `posted_history.json`
+   - **Content**: `{"history": {}}`
+   - 「Create public gist」または「Create secret gist」をクリック
+   - 作成後、URLからGist IDをコピー
+     - 例: `https://gist.github.com/username/abc123def456` → `abc123def456`
 
 ### 4. 環境変数の設定
 
@@ -51,14 +61,16 @@ Render Dashboardで、作成したCron Jobの「Environment」セクションで
 ```
 DISCORD_TOKEN=your_discord_bot_token
 DISCORD_CHANNEL_ID=your_channel_id
-DATABASE_URL=postgresql://user:password@host:port/database
+GITHUB_TOKEN=your_github_personal_access_token
+GIST_ID=your_gist_id
 DAYS_TO_CHECK=7
 HISTORY_RETENTION_DAYS=90
 ```
 
-**重要**: `DATABASE_URL`は、PostgreSQL作成時に表示される**Internal Database URL**を使用してください。
-
-**注意**: PostgreSQLを設定しない場合、履歴は一時ストレージに保存され、再デプロイ時に失われる可能性があります。
+**注意**: 
+- `GITHUB_TOKEN`と`GIST_ID`を設定すると、GitHub Gistを使用して履歴を永続化します（推奨）
+- 設定しない場合、履歴は一時ストレージに保存され、再デプロイ時に失われる可能性があります
+- PostgreSQLを使用したい場合は、`DATABASE_URL`を設定することも可能です（GitHub Gistより優先度が低い）
 
 ### 4. タイムゾーンの調整
 

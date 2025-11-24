@@ -6,13 +6,17 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: python cron_job.py
     schedule: "0 22 * * *"  # 毎日朝7時（JST = UTC 22:00前日）に実行
-    envVars:
-      - key: DISCORD_TOKEN
-        sync: false
-      - key: DISCORD_CHANNEL_ID
-        sync: false
-      - key: DAYS_TO_CHECK
-        value: "7"
-      - key: HISTORY_RETENTION_DAYS
-        value: "90"
+envVars:
+  - key: DISCORD_TOKEN
+    sync: false
+  - key: DISCORD_CHANNEL_ID
+    sync: false
+  - key: GITHUB_TOKEN
+    sync: false
+  - key: GIST_ID
+    sync: false
+  - key: DAYS_TO_CHECK
+    value: "7"
+  - key: HISTORY_RETENTION_DAYS
+    value: "90"
 

@@ -321,38 +321,49 @@ class TenkaippinCrawler:
 
 
 class HistoryManager:
-    """投稿履歴を管理するクラス（PostgreSQLまたはJSONファイル）"""
+    """投稿履歴を管理するクラス（GitHub Gist、PostgreSQL、またはJSONファイル）"""
     
     def __init__(self, history_file: Path, retention_days: int = 90):
         self.history_file = history_file
         self.retention_days = retention_days
-        self.use_database = False
+        self.storage_type = "file"  # "gist", "database", "file"
         self.db_conn = None
+        self.gist_id = None
+        self.github_token = None
         
-        # PostgreSQL接続を試みる
-        database_url = os.getenv("DATABASE_URL")
-        if database_url:
-            try:
-                import psycopg2
-                from urllib.parse import urlparse
-                
-                # DATABASE_URLをパース
-                parsed = urlparse(database_url)
-                self.db_conn = psycopg2.connect(
-                    host=parsed.hostname,
-                    port=parsed.port,
-                    database=parsed.path[1:],  # 先頭の/を除去
-                    user=parsed.username,
-                    password=parsed.password
-                )
-                self.use_database = True
-                self._init_database()
-                logger.info("PostgreSQLデータベースに接続しました")
-            except Exception as e:
-                logger.warning(f"PostgreSQL接続エラー（JSONファイルにフォールバック）: {e}")
-                self.use_database = False
+        # GitHub Gist接続を試みる（最優先）
+        github_token = os.getenv("GITHUB_TOKEN")
+        gist_id = os.getenv("GIST_ID")
+        if github_token and gist_id:
+            self.github_token = github_token
+            self.gist_id = gist_id
+            self.storage_type = "gist"
+            logger.info("GitHub Gistを使用して履歴を管理します")
+        else:
+            # PostgreSQL接続を試みる
+            database_url = os.getenv("DATABASE_URL")
+            if database_url:
+                try:
+                    import psycopg2
+                    from urllib.parse import urlparse
+                    
+                    # DATABASE_URLをパース
+                    parsed = urlparse(database_url)
+                    self.db_conn = psycopg2.connect(
+                        host=parsed.hostname,
+                        port=parsed.port,
+                        database=parsed.path[1:],  # 先頭の/を除去
+                        user=parsed.username,
+                        password=parsed.password
+                    )
+                    self.storage_type = "database"
+                    self._init_database()
+                    logger.info("PostgreSQLデータベースに接続しました")
+                except Exception as e:
+                    logger.warning(f"PostgreSQL接続エラー（JSONファイルにフォールバック）: {e}")
+                    self.storage_type = "file"
         
-        if not self.use_database:
+        if self.storage_type == "file":
             self.history = self.load_history()
             self.cleanup_old_history()
     
@@ -381,10 +392,48 @@ class HistoryManager:
     
     def load_history(self) -> Dict[str, str]:
         """投稿履歴を読み込む（key: 記事のキー, value: 投稿日時のISO形式）"""
-        if self.use_database:
+        if self.storage_type == "gist":
+            return self._load_from_gist()
+        elif self.storage_type == "database":
             return self._load_from_database()
         else:
             return self._load_from_file()
+    
+    def _load_from_gist(self) -> Dict[str, str]:
+        """GitHub Gistから履歴を読み込む"""
+        history = {}
+        if not self.github_token or not self.gist_id:
+            return history
+        
+        try:
+            import requests
+            
+            headers = {
+                "Authorization": f"token {self.github_token}",
+                "Accept": "application/vnd.github.v3+json"
+            }
+            
+            response = requests.get(
+                f"https://api.github.com/gists/{self.gist_id}",
+                headers=headers,
+                timeout=10
+            )
+            response.raise_for_status()
+            
+            gist_data = response.json()
+            # Gistのファイル名は "posted_history.json" を想定
+            files = gist_data.get("files", {})
+            for filename, file_info in files.items():
+                if filename.endswith(".json"):
+                    content = file_info.get("content", "{}")
+                    data = json.loads(content)
+                    history = data.get("history", {})
+                    logger.info(f"GitHub Gistから{len(history)}件の履歴を読み込みました")
+                    break
+        except Exception as e:
+            logger.error(f"GitHub Gist読み込みエラー: {e}")
+        
+        return history
     
     def _load_from_database(self) -> Dict[str, str]:
         """データベースから履歴を読み込む"""
@@ -429,11 +478,56 @@ class HistoryManager:
     
     def save_history(self):
         """投稿履歴を保存する"""
-        if self.use_database:
+        if self.storage_type == "gist":
+            self._save_to_gist()
+        elif self.storage_type == "database":
             # データベースは個別に保存するため、ここでは何もしない
             pass
         else:
             self._save_to_file()
+    
+    def _save_to_gist(self):
+        """GitHub Gistに履歴を保存"""
+        if not self.github_token or not self.gist_id:
+            return
+        
+        try:
+            import requests
+            
+            # 現在の履歴を読み込む
+            current_history = self._load_from_gist()
+            # 新しい履歴で更新
+            current_history.update(self.history)
+            
+            data = {
+                'last_updated': datetime.now().isoformat(),
+                'history': current_history,
+                'retention_days': self.retention_days
+            }
+            
+            headers = {
+                "Authorization": f"token {self.github_token}",
+                "Accept": "application/vnd.github.v3+json"
+            }
+            
+            payload = {
+                "files": {
+                    "posted_history.json": {
+                        "content": json.dumps(data, ensure_ascii=False, indent=2)
+                    }
+                }
+            }
+            
+            response = requests.patch(
+                f"https://api.github.com/gists/{self.gist_id}",
+                headers=headers,
+                json=payload,
+                timeout=10
+            )
+            response.raise_for_status()
+            logger.info("GitHub Gistに履歴を保存しました")
+        except Exception as e:
+            logger.error(f"GitHub Gist保存エラー: {e}")
     
     def _save_to_file(self):
         """JSONファイルに履歴を保存"""
@@ -452,10 +546,40 @@ class HistoryManager:
         """古い投稿履歴を削除"""
         cutoff_date = datetime.now() - timedelta(days=self.retention_days)
         
-        if self.use_database:
+        if self.storage_type == "gist":
+            self._cleanup_gist(cutoff_date)
+        elif self.storage_type == "database":
             self._cleanup_database(cutoff_date)
         else:
             self._cleanup_file(cutoff_date)
+    
+    def _cleanup_gist(self, cutoff_date: datetime):
+        """GitHub Gistから古い履歴を削除"""
+        if not self.github_token or not self.gist_id:
+            return
+        
+        try:
+            history = self._load_from_gist()
+            initial_count = len(history)
+            
+            keys_to_remove = []
+            for key, posted_at_str in history.items():
+                try:
+                    posted_at = datetime.fromisoformat(posted_at_str)
+                    if posted_at < cutoff_date:
+                        keys_to_remove.append(key)
+                except (ValueError, TypeError):
+                    keys_to_remove.append(key)
+            
+            for key in keys_to_remove:
+                del history[key]
+            
+            if keys_to_remove:
+                self.history = history
+                self._save_to_gist()
+                logger.info(f"GitHub Gistから古い投稿履歴を{len(keys_to_remove)}件削除しました")
+        except Exception as e:
+            logger.error(f"GitHub Gistクリーンアップエラー: {e}")
     
     def _cleanup_database(self, cutoff_date: datetime):
         """データベースから古い履歴を削除"""
@@ -501,7 +625,10 @@ class HistoryManager:
         """既に投稿済みかどうかをチェック"""
         key = f"{news_item.get('date')}_{news_item.get('title')}"
         
-        if self.use_database:
+        if self.storage_type == "gist":
+            history = self._load_from_gist()
+            return key in history
+        elif self.storage_type == "database":
             return self._is_posted_in_database(key)
         else:
             return key in self.history
@@ -523,7 +650,13 @@ class HistoryManager:
         """投稿済みとしてマーク"""
         key = f"{news_item.get('date')}_{news_item.get('title')}"
         
-        if self.use_database:
+        if self.storage_type == "gist":
+            # Gistの場合は履歴を読み込んでから更新
+            history = self._load_from_gist()
+            history[key] = datetime.now().isoformat()
+            self.history = history
+            self._save_to_gist()
+        elif self.storage_type == "database":
             self._mark_as_posted_in_database(key)
         else:
             self.history[key] = datetime.now().isoformat()

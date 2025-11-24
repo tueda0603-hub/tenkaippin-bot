@@ -50,6 +50,12 @@ DAYS_TO_CHECK=7
 
 # オプション: 投稿履歴の保持期間（日数）。デフォルトは90日間
 HISTORY_RETENTION_DAYS=90
+
+# オプション: GitHub Gistを使用した履歴の永続化（推奨：無料）
+# GitHub Personal Access Tokenを作成: https://github.com/settings/tokens
+# スコープ: gist のみでOK
+GITHUB_TOKEN=your_github_personal_access_token
+GIST_ID=your_gist_id
 ```
 
 ### 4. Botの起動
@@ -185,4 +191,5 @@ sudo systemctl start tenkaippin-bot
 - このBotは天下一品の公式サービスではありません
 - ウェブスクレイピングは利用規約を遵守してください
 - 過度なリクエストを送らないよう注意してください
+
 
