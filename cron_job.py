@@ -156,7 +156,11 @@ async def run_cron_job():
                     history_manager.db_conn.close()
                 except:
                     pass
-            await client.close()
+            # Discordクライアントを適切に閉じる
+            if not client.is_closed():
+                await client.close()
+            # HTTPセッションをクリーンアップ
+            await asyncio.sleep(0.25)  # 接続が完全に閉じるまで少し待機
     
     # Botを起動
     try:
